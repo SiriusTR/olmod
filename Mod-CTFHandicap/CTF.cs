@@ -1,7 +1,8 @@
-﻿using Harmony;
+﻿using HarmonyLib;
 using Overload;
 using System;
 using UnityEngine;
+using System.Linq;
 
 namespace GameMod
 {
@@ -25,6 +26,17 @@ namespace GameMod
                 return 1.0f;
             }
         }
+
+        public static void DrawDamageScaleLabel(Vector2 pos, MpTeam team, float w, UIElement instance)
+        {
+            var damageScale = CalculateDamageScale(team, GameManager.m_local_player.m_mp_team);
+            if (damageScale != 1.0f)
+            {
+                Color color = damageScale > 1.0f ? UIManager.m_col_red : UIManager.m_col_green;
+                string damageLabel = string.Format("{0:+0%;-0%} DAMAGE", damageScale - 1.0f);
+                instance.DrawStringSmall(damageLabel, pos - Vector2.right * (w - 100f), 0.4f, StringOffset.LEFT, color, 1f);
+            }
+        }
     }
 
     [HarmonyPatch(typeof(PlayerShip), "ApplyDamage")]
@@ -32,7 +44,7 @@ namespace GameMod
     {
         private static void Prefix(ref DamageInfo di, PlayerShip __instance)
         {
-            if (Overload.NetworkManager.IsServer() && !NetworkMatch.m_postgame &&
+            if (NetworkManager.IsServer() && !NetworkMatch.m_postgame &&
                 GameplayManager.IsMultiplayer && NetworkMatch.GetMode() == CTF.MatchModeCTF)
             {
                 var ownerPlayer = di.owner?.GetComponent<Player>();
@@ -53,19 +65,31 @@ namespace GameMod
         }
     }
 
-    [HarmonyPatch(typeof(UIElement), "DrawTeamScore")]
+    // Originally this patched DrawTeamScore but that now fights with olmod, so we have to do this instead
+    // Note this only works with two teams currently, but most of the olmod machinery to deal with more is
+    // inaccessible and it's not worth the effort to duplicate it
+    [HarmonyPatch(typeof(UIElement), "DrawMpScoreboardRaw")]
     class CTFTeamScore
     {
-        private static void Postfix(Vector2 pos, MpTeam team, int score, float w, bool my_team, UIElement __instance)
+        private static void Postfix(Vector2 pos, UIElement __instance)
         {
             if (NetworkMatch.GetMode() == CTF.MatchModeCTF)
             {
-                var damageScale = CTFHandicap.CalculateDamageScale(team, GameManager.m_local_player.m_mp_team);
-                if (damageScale != 1.0f)
+                if (NetworkMatch.GetTeamScore(MpTeam.TEAM1) > NetworkMatch.GetTeamScore(MpTeam.TEAM0))
                 {
-                    Color color = damageScale > 1.0f ? UIManager.m_col_red : UIManager.m_col_green;
-                    string damageLabel = string.Format("{0:+0%;-0%} DAMAGE", damageScale - 1.0f);
-                    __instance.DrawStringSmall(damageLabel, pos - Vector2.right * (w - 100f), 0.4f, StringOffset.LEFT, color, 1f);
+                    CTFHandicap.DrawDamageScaleLabel(pos, MpTeam.TEAM1, 350f, __instance);
+                    int numTeamPlayers = NetworkManager.m_PlayersForScoreboard
+                        .Where(player => player.m_mp_team == MpTeam.TEAM1 && !player.m_spectator).Count();
+                    pos.y += 120f + (numTeamPlayers * 25f);
+                    CTFHandicap.DrawDamageScaleLabel(pos, MpTeam.TEAM0, 350f, __instance);
+                }
+                else
+                {
+                    CTFHandicap.DrawDamageScaleLabel(pos, MpTeam.TEAM0, 350f, __instance);
+                    int numTeamPlayers = NetworkManager.m_PlayersForScoreboard
+                        .Where(player => player.m_mp_team == MpTeam.TEAM0 && !player.m_spectator).Count();
+                    pos.y += 120f + (numTeamPlayers * 25f);
+                    CTFHandicap.DrawDamageScaleLabel(pos, MpTeam.TEAM1, 350f, __instance);
                 }
             }
         }
